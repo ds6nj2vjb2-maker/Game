@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retro Snake</title>
+<style>
+  :root {
+    --lcd-bg: #9bbc0f;
+    --lcd-light: #8bac0f;
+    --lcd-dark: #306230;
+    --lcd-darkest: #0f380f;
+    --body: #2b2f33;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #1a1c1e;
+    font-family: "Courier New", Courier, monospace;
+    color: var(--lcd-darkest);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .phone {
+    background: linear-gradient(160deg, #3c4248, var(--body));
+    padding: 28px 24px 32px;
+    border-radius: 40px 40px 60px 60px;
+    box-shadow: 0 20px 40px rgba(0,0,0,.6), inset 0 2px 4px rgba(255,255,255,.15);
+    text-align: center;
+  }
+  .brand {
+    color: #c8ccd0;
+    font-weight: bold;
+    letter-spacing: 6px;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .screen-frame {
+    background: #111;
+    padding: 12px;
+    border-radius: 12px;
+    box-shadow: inset 0 0 10px #000;
+  }
+  .screen {
+    position: relative;
+    background: var(--lcd-bg);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 10px;
+    font-weight: bold;
+    font-size: 16px;
+    border-bottom: 3px solid var(--lcd-darkest);
+  }
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+  }
+  /* LCD pixel grid effect */
+  .screen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,.05) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, rgba(0,0,0,.05) 0 1px, transparent 1px 3px);
+  }
+  .overlay {
+    position: absolute;
+    inset: 34px 0 0 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: rgba(155,188,15,.88);
+    font-weight: bold;
+    z-index: 1;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h1 { font-size: 28px; letter-spacing: 2px; }
+  .overlay p { font-size: 14px; }
+  .blink { animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hint {
+    color: #8a9096;
+    font-size: 12px;
+    margin-top: 14px;
+  }
+  .pad {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: repeat(3, 52px);
+    grid-template-rows: repeat(2, 44px);
+    gap: 6px;
+    justify-content: center;
+  }
+  .pad button {
+    background: #50575e;
+    color: #dfe3e6;
+    border: none;
+    border-radius: 10px;
+    font-size: 18px;
+    box-shadow: 0 3px 0 #23272a;
+    cursor: pointer;
+  }
+  .pad button:active { transform: translateY(2px); box-shadow: 0 1px 0 #23272a; }
+  .pad .up { grid-column: 2; }
+  .pad .left { grid-column: 1; grid-row: 2; }
+  .pad .down { grid-column: 2; grid-row: 2; }
+  .pad .right { grid-column: 3; grid-row: 2; }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="brand">SNAKE</div>
+    <div class="screen-frame">
+      <div class="screen">
+        <div class="hud">
+          <span>SCORE <span id="score">0000</span></span>
+          <span>HI <span id="hi">0000</span></span>
+        </div>
+        <canvas id="game"></canvas>
+        <div id="overlay" class="overlay">
+          <h1 id="title">SNAKE</h1>
+          <p id="msg"></p>
+          <p class="blink" id="prompt">PRESS SPACE / ENTER</p>
+        </div>
+      </div>
+    </div>
+    <div class="pad">
+      <button class="up" data-dir="up">▲</button>
+      <button class="left" data-dir="left">◀</button>
+      <button class="down" data-dir="down">▼</button>
+      <button class="right" data-dir="right">▶</button>
+    </div>
+    <div class="hint">ลูกศร = บังคับ · Space/Enter = เริ่ม/เล่นใหม่ · P = หยุด</div>
+  </div>
+
+<script>
+(() => {
+  const COLS = 20, ROWS = 16, CELL = 16;
+  const COLORS = { bg: "#9bbc0f", dark: "#306230", darkest: "#0f380f" };
+  const DIRS = {
+    up: { x: 0, y: -1 }, down: { x: 0, y: 1 },
+    left: { x: -1, y: 0 }, right: { x: 1, y: 0 }
+  };
+  const KEYS = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  canvas.width = COLS * CELL;
+  canvas.height = ROWS * CELL;
+
+  const scoreEl = document.getElementById("score");
+  const hiEl = document.getElementById("hi");
+  const overlay = document.getElementById("overlay");
+  const titleEl = document.getElementById("title");
+  const msgEl = document.getElementById("msg");
+  const promptEl = document.getElementById("prompt");
+
+  let snake, dir, queue, food, score, hi, speed, state, timer;
+
+  try { hi = parseInt(localStorage.getItem("snakeHi"), 10) || 0; } catch { hi = 0; }
+  hiEl.textContent = pad(hi);
+
+  function pad(n) { return String(n).padStart(4, "0"); }
+
+  function reset() {
+    const cx = Math.floor(COLS / 2), cy = Math.floor(ROWS / 2);
+    snake = [{ x: cx, y: cy }, { x: cx - 1, y: cy }, { x: cx - 2, y: cy }];
+    dir = DIRS.right;
+    queue = [];
+    score = 0;
+    speed = 140;
+    scoreEl.textContent = pad(score);
+    placeFood();
+  }
+
+  function placeFood() {
+    const free = [];
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++)
+        if (!snake.some(s => s.x === x && s.y === y)) free.push({ x, y });
+    food = free.length ? free[Math.floor(Math.random() * free.length)] : null;
+  }
+
+  function start() {
+    reset();
+    state = "playing";
+    overlay.classList.add("hidden");
+    draw();
+    loop();
+  }
+
+  function loop() {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (state !== "playing") return;
+      step();
+      draw();
+      if (state === "playing") loop();
+    }, speed);
+  }
+
+  function step() {
+    // Apply one queued turn per tick so quick double-presses don't reverse into self
+    while (queue.length) {
+      const next = queue.shift();
+      if (next.x !== -dir.x || next.y !== -dir.y) { dir = next; break; }
+    }
+    const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    const eating = food && head.x === food.x && head.y === food.y;
+    const body = eating ? snake : snake.slice(0, -1);
+
+    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS ||
+        body.some(s => s.x === head.x && s.y === head.y)) {
+      return gameOver();
+    }
+
+    snake.unshift(head);
+    if (eating) {
+      score += 10;
+      scoreEl.textContent = pad(score);
+      speed = Math.max(60, speed - 3);
+      placeFood();
+      if (!food) return gameOver(true);
+    } else {
+      snake.pop();
+    }
+  }
+
+  function gameOver(win) {
+    state = "over";
+    clearTimeout(timer);
+    if (score > hi) {
+      hi = score;
+      hiEl.textContent = pad(hi);
+      try { localStorage.setItem("snakeHi", hi); } catch {}
+    }
+    flash(() => {
+      titleEl.textContent = win ? "YOU WIN!" : "GAME OVER";
+      msgEl.textContent = "SCORE: " + score;
+      promptEl.textContent = "PRESS SPACE TO RESTART";
+      overlay.classList.remove("hidden");
+    });
+  }
+
+  // Nokia-style death blink
+  function flash(done) {
+    let n = 0;
+    const t = setInterval(() => {
+      if (n % 2) draw(); else drawBg();
+      if (++n > 5) { clearInterval(t); draw(); done(); }
+    }, 120);
+  }
+
+  function togglePause() {
+    if (state === "playing") {
+      state = "paused";
+      clearTimeout(timer);
+      titleEl.textContent = "PAUSED";
+      msgEl.textContent = "";
+      promptEl.textContent = "PRESS P TO RESUME";
+      overlay.classList.remove("hidden");
+    } else if (state === "paused") {
+      state = "playing";
+      overlay.classList.add("hidden");
+      loop();
+    }
+  }
+
+  function drawBg() {
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function block(x, y, color, inset = 1) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x * CELL + inset, y * CELL + inset, CELL - inset * 2, CELL - inset * 2);
+  }
+
+  function draw() {
+    drawBg();
+    if (food) {
+      // Diamond-shaped food
+      const cx = food.x * CELL + CELL / 2, cy = food.y * CELL + CELL / 2, r = CELL / 2 - 3;
+      ctx.fillStyle = COLORS.darkest;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy);
+      ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy);
+      ctx.closePath();
+      ctx.fill();
+    }
+    snake.forEach((s, i) => {
+      block(s.x, s.y, COLORS.darkest);
+      if (i > 0) block(s.x, s.y, COLORS.dark, 4);
+    });
+    // Eye on head
+    const h = snake[0];
+    ctx.fillStyle = COLORS.bg;
+    const ex = h.x * CELL + CELL / 2 + dir.x * 3 - 1 + dir.y * 3;
+    const ey = h.y * CELL + CELL / 2 + dir.y * 3 - 1 - dir.x * 3;
+    ctx.fillRect(ex, ey, 3, 3);
+  }
+
+  function turn(name) {
+    if (state !== "playing") return;
+    const d = DIRS[name];
+    const last = queue.length ? queue[queue.length - 1] : dir;
+    if (queue.length < 3 && (d.x !== last.x || d.y !== last.y)) queue.push(d);
+  }
+
+  document.addEventListener("keydown", e => {
+    if (KEYS[e.key]) {
+      e.preventDefault();
+      turn(KEYS[e.key]);
+    } else if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      if (state === "ready" || state === "over") start();
+      else if (state === "paused") togglePause();
+    } else if (e.key === "p" || e.key === "P" || e.key === "Escape") {
+      togglePause();
+    }
+  });
+
+  document.querySelectorAll(".pad button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (state === "ready" || state === "over") start();
+      else turn(btn.dataset.dir);
+    });
+  });
+  overlay.addEventListener("click", () => {
+    if (state === "paused") togglePause(); else start();
+  });
+
+  // Initial screen
+  state = "ready";
+  reset();
+  draw();
+})();
+</script>
+</body>
+</html>
